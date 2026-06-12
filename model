@@ -1,0 +1,57 @@
+import torch
+import torch.nn as nn
+
+
+# =========================
+# Residual Dense Block
+# =========================
+class ResidualDenseBlock(nn.Module):
+    def __init__(self, in_channels, growth_rate):
+        super().__init__()
+
+        self.layers = nn.Sequential(
+            nn.Conv2d(in_channels, growth_rate, 3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(growth_rate, growth_rate, 3, padding=1),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(growth_rate, in_channels, 3, padding=1),
+        )
+
+    def forward(self, x):
+        return x + self.layers(x)
+
+
+# =========================
+# RDN Model
+# =========================
+class RDN(nn.Module):
+    def __init__(
+        self,
+        in_channels=1,
+        num_features=128,
+        growth_rate=64,
+        num_blocks=6,
+        upscale_factor=2,
+    ):
+        super().__init__()
+
+        self.initial_conv = nn.Conv2d(in_channels, num_features, 3, padding=1)
+
+        self.blocks = nn.Sequential(
+            *[ResidualDenseBlock(num_features, growth_rate) for _ in range(num_blocks)]
+        )
+
+        self.bottleneck = nn.Conv2d(num_features, num_features, 1)
+
+        self.final_conv = nn.Conv2d(
+            num_features, upscale_factor**2, 3, padding=1
+        )
+
+        self.upsample = nn.PixelShuffle(upscale_factor)
+
+    def forward(self, x):
+        x = self.initial_conv(x)
+        x = self.blocks(x)
+        x = self.bottleneck(x)
+        x = self.final_conv(x)
+        return self.upsample(x)

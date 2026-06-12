@@ -1,0 +1,77 @@
+import os
+import cv2
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+from PIL import Image
+from sklearn.model_selection import train_test_split
+
+
+# =========================
+# Utility: find tif files
+# =========================
+def find_tif_files(base_dir):
+    tif_files = []
+    for root, _, files in os.walk(base_dir):
+        for f in files:
+            if f.endswith(".tif"):
+                tif_files.append(os.path.join(root, f))
+    return sorted(tif_files)
+
+
+# =========================
+# Load TIFF image
+# =========================
+def load_tiff_image(image_path):
+    try:
+        img = Image.open(image_path)
+        if img.mode != "L":
+            img = img.convert("L")
+        return np.array(img)
+    except Exception as e:
+        print(f"Error loading {image_path}: {e}")
+        return None
+
+
+# =========================
+# Dataset Class
+# =========================
+class ImageDataset(Dataset):
+    def __init__(self, low_res_paths, high_res_paths):
+        self.low_res_paths = low_res_paths
+        self.high_res_paths = high_res_paths
+
+    def __len__(self):
+        return len(self.low_res_paths)
+
+    def __getitem__(self, idx):
+        lr = cv2.imread(self.low_res_paths[idx], cv2.IMREAD_GRAYSCALE)
+        hr = cv2.imread(self.high_res_paths[idx], cv2.IMREAD_GRAYSCALE)
+
+        if lr is None or hr is None:
+            raise ValueError("Image loading failed")
+
+        lr = lr / 255.0
+        hr = hr / 255.0
+
+        lr = torch.tensor(lr[np.newaxis, :, :], dtype=torch.float32)
+        hr = torch.tensor(hr[np.newaxis, :, :], dtype=torch.float32)
+
+        return lr, hr
+
+
+# =========================
+# Train/Test Split helper
+# =========================
+def create_datalists(low_dir, high_dir):
+    low_imgs = find_tif_files(low_dir)
+    high_imgs = find_tif_files(high_dir)
+
+    if len(low_imgs) != len(high_imgs):
+        raise ValueError("Mismatch in dataset size")
+
+    train_low, test_low, train_high, test_high = train_test_split(
+        low_imgs, high_imgs, test_size=0.2, random_state=42
+    )
+
+    return train_low, test_low, train_high, test_high

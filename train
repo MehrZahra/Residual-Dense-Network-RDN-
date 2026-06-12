@@ -1,0 +1,105 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+
+from model import RDN
+from dataset import ImageDataset, create_datalists
+
+
+# =========================
+# Metrics
+# =========================
+from pytorch_msssim import ssim
+
+
+def calculate_psnr(output, target):
+    mse = torch.mean((output - target) ** 2)
+    if mse == 0:
+        return float("inf")
+    return 20 * torch.log10(1.0 / torch.sqrt(mse))
+
+
+def calculate_ssim(output, target):
+    return ssim(output, target, data_range=1.0, size_average=True).item()
+
+
+# =========================
+# Config
+# =========================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+low_dir = "./data/low_res/Train LR"
+high_dir = "./data/high_res/Train HR"
+
+
+# =========================
+# Prepare data
+# =========================
+train_low, test_low, train_high, test_high = create_datalists(
+    low_dir, high_dir
+)
+
+train_dataset = ImageDataset(train_low, train_high)
+test_dataset = ImageDataset(test_low, test_high)
+
+train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+
+# =========================
+# Model
+# =========================
+model = RDN().to(device)
+
+criterion = nn.L1Loss()
+optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=0.1)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+
+
+# =========================
+# Training Loop
+# =========================
+num_epochs = 150
+
+best_psnr = 0
+
+for epoch in range(num_epochs):
+
+    model.train()
+    train_loss = 0
+
+    for lr, hr in train_loader:
+        lr, hr = lr.to(device), hr.to(device)
+
+        optimizer.zero_grad()
+        sr = model(lr)
+
+        loss = criterion(sr, hr)
+        loss.backward()
+        optimizer.step()
+
+        train_loss += loss.item()
+
+    # =====================
+    # Evaluation
+    # =====================
+    model.eval()
+    test_psnr = 0
+
+    with torch.no_grad():
+        for lr, hr in test_loader:
+            lr, hr = lr.to(device), hr.to(device)
+            sr = model(lr)
+
+            test_psnr += calculate_psnr(sr, hr)
+
+    test_psnr /= len(test_loader)
+
+    if test_psnr > best_psnr:
+        best_psnr = test_psnr
+        torch.save(model.state_dict(), "best_rdn.pth")
+
+    scheduler.step()
+
+    print(f"Epoch [{epoch+1}/{num_epochs}]  Test PSNR: {test_psnr:.2f}")
